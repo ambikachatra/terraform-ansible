@@ -1,0 +1,31 @@
+- name: Install Node.js and npm
+  hosts: webserver
+  become: yes
+
+  tasks:
+    - name: Install curl
+      apt:
+        name: curl
+        state: present
+        update_cache: yes
+
+    - name: Add Node.js 18 repo
+      shell: curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+      args:
+        executable: /bin/bash
+
+    - name: Install nodejs
+      apt:
+        name: nodejs
+        state: present
+
+    - name: Verify node and npm
+      command: node -v
+      register: node_version
+    - debug:
+        msg: "Node version: {{ node_version.stdout }}"
+
+    - command: npm -v
+      register: npm_version
+    - debug:
+        msg: "npm version: {{ npm_version.stdout }}"

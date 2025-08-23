@@ -1,0 +1,85 @@
+---
+- name: Automate Git push via Ansible
+  hosts: remote_host
+  become: yes
+  tasks:
+    - name: Install Git on Ubuntu/Debian
+      apt:
+        name: git
+        state: present
+        update_cache: yes
+
+    - name: Copy project folder to remote
+      copy:
+        src: /home/ambikac/Projects/Ansible
+       # local folder on controller
+        dest: /home/ubuntu/ansible
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Ensure correct ownership of repo directory
+      file:
+        path: /home/ubuntu/ansible
+        owner: ubuntu
+        group: ubuntu
+        recurse: yes
+
+    - name: Initialize git repo  #Initialize a git repo on remote
+      command: git init
+      args:
+        chdir: /home/ubuntu/ansible/
+
+    - name: Add files to git
+      command: git add .
+      args:
+        chdir: /home/ubuntu/ansible/
+
+    - name: Commit changes
+      command: git commit -m "done ansible test"
+      args:
+        chdir: /home/ubuntu/ansible/
+      environment:
+        GIT_COMMITTER_NAME: "ambika"           # commit author name
+        GIT_COMMITTER_EMAIL: "ambikachatra28@gmail.com" # commit author email   
+      register: commit_result
+      failed_when: commit_result.rc != 0 and "nothing to commit" not in commit_result.stdout
+
+    - name: Ensure branch is main
+      command: git branch -M main
+      args:
+        chdir: /home/ubuntu/ansible/
+ 
+    #- name: Set git remote
+     # command: git remote add origin git@github.com:ambikachatra/shiwansh.git
+     # args:
+      #  chdir: /home/ubuntu/ansible
+      #ignore_errors: yes   # if remote already exists
+    
+    - name: Add GitHub to known hosts
+      shell: ssh-keyscan github.com >> /home/ubuntu/.ssh/known_hosts
+      args:
+        creates: /home/ubuntu/.ssh/known_hosts
+      become_user: ubuntu
+
+    - name: Force set git remote to SSH
+      command: git remote set-url origin git@github.com:ambikachatra/shiwansh.git
+      args:
+        chdir: /home/ubuntu/ansible/
+      failed_when: false   # in case origin doesn't exist yet
+
+    
+    - name: Pull remote changes (safe merge)
+      command: git pull origin main --rebase
+      args:
+        chdir: /home/ubuntu/ansible/
+      become_user: ubuntu
+      register: pull_result
+      failed_when: pull_result.rc != 0 and "couldn't find remote ref main" not in pull_result.stderr
+
+    - name: Push to origin main
+      command: git push -u origin main
+      args:
+        chdir: /home/ubuntu/ansible/
+      become: yes
+      become_user: ubuntu

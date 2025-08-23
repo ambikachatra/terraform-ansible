@@ -1,0 +1,14 @@
+---
+- name: Build the Node.js App
+  hosts: webserver
+  tasks:
+    - name: Install npm dependencies
+      community.general.npm:
+        path: /home/ubuntu/portfolio-demo
+
+    - name: Build the app with 'npm run build'
+      ansible.builtin.command:
+        cmd: npm run build
+        chdir: /home/ubuntu/portfolio-demo # This ensures the command runs in your project folder
+      args:
+        creates: /home/ubuntu/portfolio-demo/build # This prevents rebuilding if 'build' folder already exists

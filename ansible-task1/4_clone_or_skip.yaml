@@ -1,0 +1,11 @@
+---
+- name: Clone or Update Portfolio Repo
+  hosts: webserver
+  tasks:
+    - name: Clone repo from GitHub
+      ansible.builtin.git:
+        repo: 'https://github.com/ambikachatra/portfolio-demo.git'
+        dest: /home/ubuntu/portfolio-demo
+        clone: yes
+        update: yes
+        force: yes # This is the line you need to add
