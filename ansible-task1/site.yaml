@@ -1,0 +1,6 @@
+# site.yml
+# This is the main playbook that runs all other playbooks in order.
+
+- import_playbook: setup_server.yaml
+- import_playbook: install_dependencies.yaml
+- import_playbook: deploy_app.yaml

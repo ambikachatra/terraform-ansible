@@ -1,0 +1,11 @@
+# vars/main.yml
+
+# Application settings
+repo_url: "git@github.com:ambikachatra/portfolio-setup.git" # Correct SSH format
+project_path: "/opt/node-app"
+
+# Nginx settings
+nginx_web_root: "/var/www/html"
+
+# Node.js settings (e.g., '18', '20')
+node_version: "20"

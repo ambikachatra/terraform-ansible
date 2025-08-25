@@ -1,0 +1,25 @@
+- name: 02 - Install Core Dependencies
+  hosts: webserver # Or 'webserver' if that's your group name
+  become: yes
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Nginx, Git, and other basics
+      ansible.builtin.apt:
+        name: ['nginx', 'git']
+        state: present
+
+    - name: Add NodeSource repository for Node.js
+      ansible.builtin.shell: "curl -fsSL https://deb.nodesource.com/setup_{{ node_version }}.x | bash -"
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Install Node.js and npm
+      ansible.builtin.apt:
+        name: ['nodejs']
+        state: present

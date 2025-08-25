@@ -1,0 +1,33 @@
+# setup_server.yml
+- name: 01 - Prepare Server Environment
+  hosts: webserver
+  become: yes
+  tasks:
+    - name: Check if swap file exists
+      stat:
+        path: /swapfile
+      register: swap_file_check
+
+    - name: Create swap file if it does not exist
+      command: fallocate -l 2G /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: Set correct permissions for swap file
+      file:
+        path: /swapfile
+        mode: '0600'
+      when: not swap_file_check.stat.exists
+
+    - name: Make swap
+      command: mkswap /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: Turn on swap
+      command: swapon /swapfile
+      when: not swap_file_check.stat.exists
+
+    - name: Add swap to /etc/fstab for persistence
+      lineinfile:
+        path: /etc/fstab
+        line: '/swapfile none swap sw 0 0'
+        state: present

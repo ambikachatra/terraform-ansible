@@ -1,6 +1,0 @@
-- import_playbook: 1_create_swap_file.yaml 
-- import_playbook: 2_install_nginx.yaml
-- import_playbook: 3_node_install.yaml
-- import_playbook: 4_clone_or_skip.yaml 
-- import_playbook: 5_build_app.yaml 
-- import_playbook: 6_deploy_nginx.yaml

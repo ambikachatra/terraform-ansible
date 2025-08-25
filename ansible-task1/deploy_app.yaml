@@ -1,0 +1,54 @@
+- name: 03 - Deploy Node.js Application
+  hosts: webserver # Or 'webserver' to match your inventory
+  become: yes
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Create project directory and set ownership
+      ansible.builtin.file:
+        path: "{{ project_path }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Clone the application repository
+      become: no
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ project_path }}"
+        accept_hostkey: yes
+        update: yes
+
+    - name: Install npm dependencies
+      become: no
+      community.general.npm:
+        path: "{{ project_path }}/Portfolio-CU-" # CORRECTED: Use the actual folder name
+
+    - name: Build the application
+      become: no
+      ansible.builtin.command:
+        cmd: npm run build
+        chdir: "{{ project_path }}/Portfolio-CU-" # CORRECTED: Use the actual folder name
+      args:
+        creates: "{{ project_path }}/Portfolio-CU-/build" # CORRECTED: Use the actual folder name
+
+    - name: Clean out old content from Nginx root
+      ansible.builtin.file:
+        path: "{{ nginx_web_root }}/"
+        state: absent
+
+    - name: Copy build files to Nginx root
+      ansible.builtin.copy:
+        src: "{{ project_path }}/Portfolio-CU-/build/" # CORRECTED: Use the actual folder name
+        dest: "{{ nginx_web_root }}/"
+        remote_src: yes
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Ensure Nginx is started and enabled
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+        enabled: yes
