@@ -10,7 +10,6 @@ import About from './components/About';
 import Summary from './components/Summary';
 import Experience from './components/Experience';
 import Educations from './components/Educations';
-import Projects from './components/Projects';
 import Skills from './components/Skills';
 import Certification from './components/Certifactions'; // Check spelling in file too
 import Contact from './components/Contact';
@@ -31,7 +30,6 @@ function App() {
           ['summary', <Summary />],
           ['experience', <Experience />],
           ['educations', <Educations />],
-          ['projects', <Projects />],
           ['skills', <Skills />],
           ['certification', <Certification />],
           ['contact', <Contact />],
