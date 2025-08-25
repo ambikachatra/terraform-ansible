@@ -1,7 +1,7 @@
 import React from 'react';
 import { TypeAnimation } from 'react-type-animation';
 import { FaDownload } from 'react-icons/fa';
-import resumePDF from '../assets/resume.pdf.pdf'; // Make sure this file exists
+import resumePDF from '../assets/DevopsResume - 2025.pdf'; // Make sure this file exists
 import profileImg from '../assets/ambika.jpeg'; // ✅ Your profile picture
 import '../App.css';
 export default function Home() {
