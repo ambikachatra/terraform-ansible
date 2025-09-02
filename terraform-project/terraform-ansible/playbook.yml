@@ -1,0 +1,391 @@
+---
+# =============================
+# Web Host Setup (Node.js App)
+# =============================
+- name: Setup Web host
+  hosts: web
+  become: true
+  gather_facts: false # Skip fact gathering to prevent memory issues on small instances
+  vars:
+    # --- IMPORTANT ---
+    # UPDATE this path to point to the location of your private deploy key
+    # on the machine running Ansible (the control node).
+    github_deploy_key_path: "~/.ssh/id_rsa_deploy"
+
+    # Switched to SSH URL for private repo access
+    project_repo: "git@github.com:ambikachatra/portfolio.git" # CORRECTED USERNAME
+    project_root: "/var/www/portfolio"
+    deploy_root: "/var/www/html"
+
+  tasks:
+    # --- Initial Server Configuration ---
+    - name: Remove apt lock files to prevent hangs
+      ansible.builtin.shell:
+        cmd: |
+          rm -f /var/lib/dpkg/lock-frontend
+          rm -f /var/lib/dpkg/lock
+          rm -f /var/lib/apt/lists/lock
+          rm -f /var/cache/apt/archives/lock
+          dpkg --configure -a
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false # Don't fail if the lock files don't exist
+
+    - name: Install language pack to fix locale settings
+      ansible.builtin.apt:
+        name: language-pack-en
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Generate and update locale settings
+      ansible.builtin.shell:
+        cmd: |
+          locale-gen en_IN.UTF-8
+          update-locale LANG=en_IN.UTF-8
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Remove previous NodeSource list if it exists (to ensure clean state)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/nodesource.list
+        state: absent
+
+    - name: Ensure prerequisites are installed
+      ansible.builtin.apt:
+        name:
+          - curl
+          - git
+          - rsync # Prerequisite for the synchronize module
+          - gnupg # Prerequisite for gpg command
+        state: present
+        update_cache: yes
+
+    # --- Node.js Installation (Using Vendor Script for Reliability) ---
+    - name: Add NodeSource repository and update apt cache
+      ansible.builtin.shell:
+        cmd: "curl -fsSL https://deb.nodesource.com/setup_18.x | bash -"
+        creates: /etc/apt/sources.list.d/nodesource.list # Makes the task idempotent
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Install Node.js
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+
+    # --- Pre-flight Check for Deploy Key ---
+    - name: Check if the local deploy key exists
+      ansible.builtin.stat:
+        path: "{{ github_deploy_key_path }}"
+      register: deploy_key_stat
+      delegate_to: localhost
+      run_once: true
+      become: false # This task runs locally and does not need sudo
+
+    - name: Fail with helpful message if deploy key is not found
+      ansible.builtin.fail:
+        msg: |
+          FATAL: The deploy key was not found at '{{ github_deploy_key_path }}' on your local machine.
+          Please do the following to resolve this:
+          1. Generate a new SSH key pair by running this command on your local machine:
+             ssh-keygen -t ed25519 -C "ansible-deploy-key" -f {{ github_deploy_key_path | expanduser }}
+          2. Add the NEW public key ('{{ github_deploy_key_path | expanduser }}.pub') to your GitHub repository's "Deploy Keys" section.
+          3. Ensure the `github_deploy_key_path` variable in this playbook is correct.
+      when: not deploy_key_stat.stat.exists
+      delegate_to: localhost
+      run_once: true
+      become: false # This task runs locally and does not need sudo
+
+    # --- Application Deployment ---
+    - name: Ensure project root's parent directory exists
+      ansible.builtin.file:
+        path: "{{ project_root | dirname }}" # e.g., /var/www
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Ensure .ssh directory exists for the root user
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Copy deploy key to the remote host
+      ansible.builtin.copy:
+        src: "{{ github_deploy_key_path }}"
+        dest: /root/.ssh/github_deploy_key
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Mark project directory as safe for git
+      ansible.builtin.command:
+        cmd: git config --global --add safe.directory {{ project_root }}
+      changed_when: false
+
+    - name: Clone portfolio repo
+      ansible.builtin.git:
+        repo: "{{ project_repo }}"
+        dest: "{{ project_root }}"
+        version: main
+        force: yes
+        update: yes
+        depth: 1
+        accept_hostkey: yes
+        key_file: /root/.ssh/github_deploy_key
+
+    # --- Create Swap File to Prevent Memory Errors During Build ---
+    - name: Create a 2GB swap file
+      ansible.builtin.command:
+        cmd: fallocate -l 2G /swapfile
+        creates: /swapfile
+
+    - name: Set permissions for swap file
+      ansible.builtin.file:
+        path: /swapfile
+        mode: '0600'
+        
+    - name: Check if swap is already active
+      ansible.builtin.shell: "grep -q /swapfile /proc/swaps"
+      register: swap_active_check
+      failed_when: false
+      changed_when: false
+
+    - name: Make the swap file
+      ansible.builtin.command:
+        cmd: mkswap /swapfile
+      when: swap_active_check.rc != 0
+
+    - name: Enable the swap file
+      ansible.builtin.command:
+        cmd: swapon /swapfile
+      when: swap_active_check.rc != 0
+      changed_when: false
+
+    - name: Ensure project files are owned by www-data
+      ansible.builtin.file:
+        path: "{{ project_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Install project dependencies using 'npm install'
+      ansible.builtin.shell:
+        cmd: "sudo -u www-data sh -c 'cd {{ project_root }} && npm install --production'"
+      args:
+        chdir: "{{ project_root }}"
+      changed_when: false
+      async: 600
+      poll: 30
+
+    - name: Build project
+      ansible.builtin.shell:
+        cmd: "sudo -u www-data sh -c 'cd {{ project_root }} && npm run build'"
+      args:
+        chdir: "{{ project_root }}"
+      changed_when: false
+      async: 600
+      poll: 30
+
+    - name: Ensure deploy root directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Deploy built files to deploy root
+      ansible.builtin.copy:
+        src: "{{ project_root }}/build/"
+        dest: "{{ deploy_root }}/"
+        remote_src: yes
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Ensure Nginx is installed
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    # --- Nginx Configuration for a Single-Page App ---
+    - name: Create Nginx configuration for the portfolio site
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/portfolio
+        content: |
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+
+              # Include the master list of MIME types
+              include /etc/nginx/mime.types;
+
+              root {{ deploy_root }};
+              index index.html;
+
+              server_name _;
+
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+
+              # Add cache-busting headers for static assets
+              location ~* \.(?:css|js|jpg|jpeg|gif|png|ico|svg)$ {
+                  expires -1;
+                  add_header Cache-Control "no-cache, no-store, must-revalidate";
+              }
+          }
+      notify: Restart Nginx
+
+    - name: Disable the default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Restart Nginx
+
+    - name: Enable the new portfolio site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/portfolio
+        dest: /etc/nginx/sites-enabled/portfolio
+        state: link
+      notify: Restart Nginx
+
+    - name: Force immediate handler execution to apply Nginx changes
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+        enabled: true
+
+# =============================
+# Docker Host Setup
+# =============================
+- name: Setup Docker host
+  hosts: docker
+  become: true
+  gather_facts: false # Skip fact gathering to prevent memory issues on small instances
+  tasks:
+    # --- Run a single, aggressive cleanup task FIRST to ensure a clean apt state ---
+    - name: Perform deep clean of all old Docker apt configurations
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          # Remove from main sources file
+          sed -i '/download.docker.com/d' /etc/apt/sources.list
+          # Find and remove any partial/broken list files
+          find /etc/apt/sources.list.d/ -type f -name "*.list" -exec grep -l "download.docker.com" {} + | xargs -r rm -f
+          # Remove the old GPG key if it exists
+          rm -f /etc/apt/keyrings/docker.gpg
+          # Remove lock files
+          rm -f /var/lib/dpkg/lock-frontend
+          rm -f /var/lib/dpkg/lock
+          rm -f /var/lib/apt/lists/lock
+          rm -f /var/cache/apt/archives/lock
+          # Attempt to fix any broken package states
+          dpkg --configure -a
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false # Don't want this to fail if a file doesn't exist
+
+    # --- Now proceed with server configuration ---
+    - name: Install language pack to fix locale settings
+      ansible.builtin.apt:
+        name: language-pack-en
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Generate and update locale settings
+      ansible.builtin.shell:
+        cmd: |
+          locale-gen en_IN.UTF-8
+          update-locale LANG=en_IN.UTF-8
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Ensure prerequisites are installed
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - gnupg
+        state: present
+        update_cache: yes
+
+    # --- Docker GPG Key and Repository (Most Robust GPG Key Handling) ---
+    - name: Ensure apt keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download and dearmor Docker GPG key
+      ansible.builtin.shell:
+        cmd: "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
+        creates: /etc/apt/keyrings/docker.gpg
+    
+    - name: Ensure Docker GPG key has correct permissions
+      ansible.builtin.file:
+        path: /etc/apt/keyrings/docker.gpg
+        mode: '0644'
+
+    - name: Add Docker repository source list
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu focal stable"
+        mode: '0644'
+
+    - name: Update apt cache after adding Docker repo
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Update apt and install Docker
+      ansible.builtin.apt:
+        name: docker-ce
+        state: latest
+        update_cache: yes
+
+    - name: Ensure Docker service is running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    # --- Get System Info for Docker Compose URL ---
+    - name: Get system architecture
+      ansible.builtin.command: uname -m
+      register: uname_m
+      changed_when: false
+
+    - name: Get system type
+      ansible.builtin.command: uname -s
+      register: uname_s
+      changed_when: false
+
+    - name: Install Docker Compose (latest)
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/latest/download/docker-compose-{{ uname_s.stdout | lower }}-{{ uname_m.stdout }}"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Verify Docker Compose installation
+      ansible.builtin.command: docker-compose --version
+      changed_when: false
+
